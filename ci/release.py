@@ -1,19 +1,15 @@
 #!/usr/bin/env python3
 from datetime import datetime, timedelta
-
 import time
-from watchdog.events import FileSystemEvent, FileSystemEventHandler
-from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 from watchdog.observers.polling import PollingObserver
-import watchdog
 import warnings
 import argparse
 import json
 import re
 import subprocess
 
-RM_ALIAS = "_~rm_me_~"
-ASE_EXTENSION_FOLDER = "/home/kags/.config/aseprite/extensions/asefold"
+ASE_EXTENSION_FOLDER = "~/.config/aseprite/extensions/asefold"
 EXPORT_FILE = "asefold.lua"
 EXTENSION_FILE = "extension.lua"
 ZIP_FILE = "asefold.v{}.aseprite-extension"
@@ -29,7 +25,6 @@ REMOVE_PATTERNS = [
         r".*print\(.*", ""
     ],
 ]
-are_we_running = False
 
 def preprocess_extension(is_release):
     with open(EXPORT_FILE, "r") as f:
@@ -41,8 +36,6 @@ def preprocess_extension(is_release):
             break
         result = re.sub(pattern, replacement, result)
     
-    # result = result.replace(RM_ALIAS, "").replace(f"\n{RM_ALIAS}", "").replace(f"\r{RM_ALIAS}", "")
-
     result = "\n".join([line for line in result.split("\n") if line ])
 
     with open(EXTENSION_FILE, "w+") as f:
@@ -77,13 +70,13 @@ class AsefoldHandler(FileSystemEventHandler):
         super().__init__(*argses, **kwargs)
         self.args = args
         self.last_modified = datetime.now()
+
+        run(self.args)
     def on_any_event(self, event):
         if datetime.now() - self.last_modified < timedelta(seconds=1):
             return
         else:
             self.last_modified = datetime.now()
-        # time.sleep(.5)
-        # print(f"Event: {event} {are_we_running}")
         if not event.is_directory:
             # and event.src_path != self.last_event
             # print("Running")
@@ -108,7 +101,7 @@ def run(args:argparse.Namespace):
         command = f"zip {ZIP_FILE.format(version)} {all_files} {rm_extension} && echo 'finished exporting {ZIP_FILE.format(version)}'"
     else:
         # this shit does not work, aseprite does not reload from files
-        command = f"cp {all_files} {ASE_EXTENSION_FOLDER}"
+        command = f"cp {all_files} {ASE_EXTENSION_FOLDER} && rm {EXTENSION_FILE} && echo 'finished exporting {ZIP_FILE.format(version)}'"
     print(f"Running: `{command}`")
     subprocess.Popen(command, shell = True).communicate()
 
