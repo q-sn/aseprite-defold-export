@@ -1,11 +1,12 @@
 # Aseprite Extension Build Artifacts
 *.aseprite-extension
+.luarc.json
 
 # Defold Build Artifacts
-/example/assets/
-/example/.internal/
-/example/build/
-/example/.editor_settings
+example/assets/
+example/.internal/
+example/build/
+example/.editor_settings
 
 # Compiled Lua
 *.luac
@@ -15,6 +16,3 @@ luac.out
 __pycache__/
 *.pyc
 *.pyo
-
-.luarc.json
-

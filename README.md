@@ -13,6 +13,4 @@ Asefold expects your `.aseprite` source files to live in an intermediary folder 
 
 Sprites without tags are exported as a single animation. When tags are present, each tag becomes its own animation entry in the tilesource.
 
-![](/docs/export_different_tags.gif)
-
 ![](/docs/different_tag_support.gif)
