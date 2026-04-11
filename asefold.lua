@@ -571,7 +571,14 @@ local function get_animations_from_tags(export_data)
                 return {}, {}, format_err
             end
             local data = frame_data[id]
-            local tag_data = tag.data or UserData.loop
+            local tag_data = tag.data
+            if not tag_data or tag_data == "" then
+                if tag["repeat"] and tag["repeat"] == "1" then
+                    tag_data = UserData.once
+                else
+                    tag_data = UserData.loop
+                end
+            end
             if data and not consumed_ids[id] then
                 --- _ignore_start_
                 print(
