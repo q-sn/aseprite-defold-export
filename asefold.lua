@@ -44,9 +44,10 @@ local C = {
     empty_space = " ",
     id_format = "%s_%s",
     tileset_filename_template = "%s_%s",
-    module_filename_template = "%s_tilesource.lua",
+    module_filename_template = "%s_%s.lua",
     defold_sprite = "defold_sprite",
     extension_tilesource = "tilesource",
+    extension_atlas = "atlas",
     extension_tilemap = "tilemap",
     filename = "%s.%s",
     extension_png = "png",
@@ -118,6 +119,23 @@ collision_groups: "default"
 extrude_borders: 2
 inner_padding: 0
 sprite_trim_mode: SPRITE_TRIM_MODE_OFF]],
+    _atlas_image_template = [[
+images {
+  image: "%s"
+}]],
+    _atlas_animation_template = [[
+animations {
+  id: "%s"
+%s
+  playback: %s
+  fps: %d
+  flip_horizontal: %d
+  flip_vertical: %d
+}]],
+    _atlas_template = [[
+%s
+%s
+extrude_borders: 2]],
     _tilemap_cell_template = [[
   cell {
     x: %d
@@ -187,6 +205,9 @@ local L = {
     ok = "ok",
     filepath_label = "where to export",
     output_folder_label = "output folder",
+    output_format_label = "output format",
+    trim_cels = "trim cels",
+    trim_cels_label = "remove transparent borders",
     run_label = "run export",
     sheet_type_label = "sheet type",
     generate_module = "generate lua module",
@@ -199,11 +220,14 @@ local L = {
 }
 
 local LuaModuleType = { none = "none", shallow = "shallow", deep = "deep" }
+local OutputFormat = { tilesource = "tilesource", atlas = "atlas" }
 local DialogWidgets = {
     Animation = "animation",
     SpriteSheetType = "sprite_sheet_type",
     GenerateModule = "generate_module",
     OutputFolder = "output_folder",
+    OutputFormat = "output_format",
+    TrimCels = "trim_cels",
     FlattenVisible = "flatten_visible",
     suppressInfo = "supress_info",
 }
@@ -212,6 +236,8 @@ local WidgetsValueField = {
     [DialogWidgets.SpriteSheetType] = "option",
     [DialogWidgets.GenerateModule] = "option",
     [DialogWidgets.OutputFolder] = "text",
+    [DialogWidgets.OutputFormat] = "option",
+    [DialogWidgets.TrimCels] = "selected",
     [DialogWidgets.FlattenVisible] = "selected",
     [DialogWidgets.suppressInfo] = "selected",
 }
@@ -395,6 +421,28 @@ local function format_animation(
         id,
         start_tile,
         end_tile,
+        playback,
+        fps,
+        flip_horizontal,
+        flip_vertical
+    )
+end
+
+local function format_atlas_animation(
+    id,
+    image_paths,
+    playback,
+    fps,
+    flip_horizontal,
+    flip_vertical
+)
+    local images_block = {}
+    for _, path in ipairs(image_paths) do
+        table.insert(images_block, ("  images {\n    image: \"%s\"\n  }"):format(path))
+    end
+    return C._atlas_animation_template:format(
+        id,
+        table.concat(images_block, "\n"),
         playback,
         fps,
         flip_horizontal,
@@ -636,6 +684,157 @@ local function get_animations_from_tags(export_data)
     return animations, animation_ids, err
 end
 
+local function get_atlas_animations_from_tags(export_data, internal_image_dir)
+    local animations = {}
+    local animation_ids = {}
+    local err = false
+    local all_frame_paths = {}
+
+    if #export_data.meta.frameTags == 0 then
+        export_data.meta.frameTags = {
+            {
+                name = empty_name,
+                from = 0,
+                to = #app.sprite.frames - 1,
+                direction = "forward",
+                color = "#000000ff",
+            },
+        }
+    end
+
+    local frame_tags = export_data.meta.frameTags
+    local frame_data = {}
+    for frame_name, frame in pairs(export_data.frames) do
+        local layer, frame_number =
+            string.match(frame_name, C.data_filename_parse)
+        frame_number = tonumber(frame_number)
+        for _, tag_data in ipairs(export_data.meta.frameTags) do
+            local tag = tag_data.name
+            local start_frame = tag_data.from
+            local end_frame = tag_data.to
+            if frame_number >= start_frame and frame_number <= end_frame then
+                layer = layer
+                    or string.sub(
+                        frame_name,
+                        1,
+                        string.find(frame_name, C.filename_parse_separator) - 1
+                    )
+                local id, format_err = id_formatting(layer, tag)
+                if format_err then
+                    return {}, {}, {}, format_err
+                end
+                if layer then
+                    frame_data[id] = frame_data[id]
+                        or {
+                            layer = layer,
+                            tag = tag,
+                            frame_number = frame_number,
+                            durations = {},
+                            frame_numbers = {},
+                        }
+                    table.insert(frame_data[id].frame_numbers, frame_number)
+                    table.insert(frame_data[id].durations, frame.duration)
+                end
+            end
+        end
+    end
+
+    for data_id, frame in pairs(frame_data) do
+        local avg_duration_ms = average(frame.durations)
+        frame_data[data_id].fps = 1000 / avg_duration_ms
+        table.sort(frame.frame_numbers)
+    end
+
+    local consumed_ids = {}
+    local pingpong_reverse_warning = true
+
+    for _, layer in ipairs(export_data.meta.layers) do
+        for _, tag in ipairs(frame_tags) do
+            tag = tag or { name = empty_name }
+            assert(layer.name)
+            local id, format_err = id_formatting(layer.name, tag.name)
+            if format_err then
+                return {}, {}, {}, format_err
+            end
+            local data = frame_data[id]
+            local tag_data = tag.data
+            if not tag_data or tag_data == "" then
+                if tag["repeat"] and tag["repeat"] == "1" then
+                    tag_data = UserData.once
+                else
+                    tag_data = UserData.loop
+                end
+            end
+            if data and not consumed_ids[id] then
+                local playback_match = {
+                    [UserData.once] = MapAniDir[direction_loop(
+                        tag.direction or AniDir.FORWARD,
+                        false
+                    )],
+                    [UserData.none] = MapAniDir.none,
+                    [UserData.loop] = MapAniDir[direction_loop(
+                        tag.direction or AniDir.FORWARD,
+                        true
+                    )],
+                }
+                local resulting_match = playback_match.loop
+                for key, v in pairs(playback_match) do
+                    if tag_data:find(key) then
+                        resulting_match = v
+                        break
+                    end
+                end
+
+                if
+                    tag.direction == PINGPONG_REVERSE
+                    and pingpong_reverse_warning
+                then
+                    error_dialog(nil, L.pingpong_reverse_warning)
+                    pingpong_reverse_warning = false
+                end
+
+                local image_paths = {}
+                for _, frame_num in ipairs(data.frame_numbers) do
+                    local tile_id = C.id_format:format(data.layer, frame_num)
+                    local frame_path = internal_image_dir
+                        .. app.fs.fileTitle(app.sprite.filename)
+                        .. "_" .. tile_id .. "." .. C.extension_png
+                    table.insert(image_paths, frame_path)
+                    all_frame_paths[tile_id] = true
+                end
+
+                local animation = format_atlas_animation(
+                    id,
+                    image_paths,
+                    resulting_match,
+                    data.fps,
+                    0,
+                    0
+                )
+                table.insert(animations, animation)
+                table.insert(animation_ids, id)
+                consumed_ids[id] = true
+            end
+        end
+    end
+
+    local unique_frame_paths = {}
+    for tile_id, _ in pairs(all_frame_paths) do
+        local frame_path = internal_image_dir
+            .. app.fs.fileTitle(app.sprite.filename)
+            .. "_" .. tile_id .. "." .. C.extension_png
+        table.insert(unique_frame_paths, { id = tile_id, path = frame_path })
+    end
+    table.sort(unique_frame_paths, function(a, b) return a.id < b.id end)
+
+    local image_entries = {}
+    for _, entry in ipairs(unique_frame_paths) do
+        table.insert(image_entries, C._atlas_image_template:format(entry.path))
+    end
+
+    return image_entries, animations, animation_ids, err
+end
+
 ---@param name string
 local function format_module_line(name, tab)
     tab = tab or C.tab2
@@ -667,7 +866,10 @@ local function save_module(dialog, filepath, animation_ids, export_data)
 
     local layers = {}
     for _, layer in ipairs(export_data.meta.layers) do
-        table.insert(layers, format_module_line(layer.name))
+        local is_group = not layer.opacity
+        if not is_group then
+            table.insert(layers, format_module_line(layer.name))
+        end
     end
 
     local tags = {}
@@ -707,6 +909,9 @@ local function save_tilesource(savedata)
         animations, animation_ids, err =
             get_animations_from_tags(savedata.export_data)
     end
+    if err then
+        return err
+    end
     local out_data = C._tilesource_template:format(
         savedata.image_filepath,
         savedata.tile_width or app.sprite.width,
@@ -729,6 +934,44 @@ local function save_tilesource(savedata)
     end
     return false
 end
+
+local function save_atlas(savedata)
+    local file
+    ---@type boolean | string | nil
+    local err
+    file, err = io.open(savedata.filepath, "w+")
+    if err or not file then
+        return { tostring(err) }, true
+    end
+    local image_entries, animations, animation_ids = {}, {}, {}
+    err = false
+    if is_from_tags(savedata.dialog) and savedata.export_data then
+        image_entries, animations, animation_ids, err =
+            get_atlas_animations_from_tags(
+                savedata.export_data,
+                savedata.internal_image_dir
+            )
+    end
+    if err then
+        return err
+    end
+    local out_data = C._atlas_template:format(
+        table.concat(image_entries, "\n"),
+        table.concat(animations, "\n")
+    )
+    file:write(out_data)
+    file:close()
+    if savedata.export_data then
+        save_module(
+            savedata.dialog,
+            savedata.module_filename,
+            animation_ids,
+            savedata.export_data
+        )
+    end
+    return false
+end
+
 local function get_paths(dialog, names)
     names = names or {}
     local paths = {}
@@ -763,9 +1006,16 @@ local function get_paths(dialog, names)
         .. app.fs.joinPath(reference_folder, _sprite_png)
     local _tilesource_p = C.filename:format(sprite_name, C.extension_tilesource)
     paths.tilesource_filename = app.fs.joinPath(relative_folder, _tilesource_p)
+    local _atlas_p = C.filename:format(sprite_name, C.extension_atlas)
+    paths.atlas_filename = app.fs.joinPath(relative_folder, _atlas_p)
+    paths.atlas_frames_folder = relative_folder
+    paths.internal_image_dir = app.fs.pathSeparator
+        .. app.fs.joinPath(reference_folder, "")
+    local output_format = dialog.data[DialogWidgets.OutputFormat]
+        or OutputFormat.tilesource
     paths.module_filepath = app.fs.joinPath(
         relative_folder,
-        C.module_filename_template:format(sprite_name)
+        C.module_filename_template:format(sprite_name, output_format)
     )
 
     if not names.tileset then
@@ -1121,6 +1371,102 @@ local function _export_tilesource(dialog)
     return success_information
 end
 
+local function _export_atlas(dialog)
+    local ran_transaction = false
+    if dialog.data[DialogWidgets.FlattenVisible] then
+        app.transaction(function()
+            local layer_name = app.layer.name
+            for _, layer in ipairs(app.sprite.layers) do
+                if not layer.isVisible then
+                    app.sprite:deleteLayer(layer)
+                    ran_transaction = true
+                end
+            end
+            app.sprite:flatten()
+            ran_transaction = true
+            app.layer.name = layer_name
+            ran_transaction = true
+        end)
+    end
+
+    local paths = get_paths(dialog)
+    if not paths then
+        return {}
+    end
+
+    app.command.ExportSpriteSheet({
+        ui = false,
+        dataFilename = paths.temporary_export_path,
+        askOverwrite = false,
+        splitLayers = true,
+        type = type_map[dialog.data[DialogWidgets.SpriteSheetType]],
+        textureFilename = paths.export_texture_path,
+        filenameFormat = C.data_filename_template,
+    })
+
+    if ran_transaction then
+        app.undo()
+    end
+
+    local export_data = get_obj_from_temp(paths.temporary_export_path)
+    ---@cast export_data table
+
+    local sprite_name = app.fs.fileTitle(app.sprite.filename) or C.defold_sprite
+    local sheet_image = Image{ fromFile = paths.export_texture_path }
+    for frame_name, frame_info in pairs(export_data.frames) do
+        local layer, frame_num =
+            string.match(frame_name, C.data_filename_parse)
+        if layer and frame_num then
+            local rect = Rectangle(
+                frame_info.frame.x, frame_info.frame.y,
+                frame_info.frame.w, frame_info.frame.h
+            )
+            local tile_image = Image(sheet_image, rect)
+            if dialog.data[DialogWidgets.TrimCels] then
+                local trimmed = tile_image:shrinkBounds()
+                if not trimmed.isEmpty then
+                    tile_image = Image(tile_image, trimmed)
+                end
+            end
+            local tile_filename = C.id_format:format(layer, frame_num)
+            tile_image:saveAs(app.fs.joinPath(
+                paths.atlas_frames_folder,
+                sprite_name .. "_" .. tile_filename .. "." .. C.extension_png
+            ))
+        end
+    end
+
+    local err = save_atlas({
+        dialog = dialog,
+        export_data = export_data,
+        filepath = paths.atlas_filename,
+        internal_image_dir = paths.internal_image_dir,
+        module_filename = paths.module_filepath,
+    })
+    if err then
+        error_dialog(dialog, { err })
+        return {}
+    end
+
+    local success_information = {}
+    table.insert(
+        success_information,
+        L.save_printout:format("Temporary JSON", paths.temporary_export_path)
+    )
+    table.insert(
+        success_information,
+        L.save_printout:format("Atlas", paths.atlas_filename)
+    )
+    if is_export_lua_module(dialog) then
+        table.insert(
+            success_information,
+            L.save_printout:format("Lua module", paths.module_filepath)
+        )
+    end
+    (dialog or { close = function(...) end }):close()
+    return success_information
+end
+
 ---@param dialog Dialog
 local function dialog_export_tilesource(dialog)
     -- sheet_type_label = "sheet type",
@@ -1185,6 +1531,12 @@ local function dialog_export_tilesource(dialog)
             text = L.suppress_info,
             label = L.suppress_label,
         })
+        :check({
+            id = DialogWidgets.TrimCels,
+            text = L.trim_cels,
+            label = L.trim_cels_label,
+            enabled = false,
+        })
 end
 
 ---@param dialog Dialog
@@ -1200,6 +1552,20 @@ local function basic_dialog(dialog, overrides)
             save = true,
             label = L.output_folder_label,
             id = DialogWidgets.OutputFolder,
+        })
+        :combobox({
+            id = DialogWidgets.OutputFormat,
+            label = L.output_format_label,
+            options = { OutputFormat.tilesource, OutputFormat.atlas },
+            option = OutputFormat.tilesource,
+            onchange = function()
+                local is_atlas = dialog.data[DialogWidgets.OutputFormat]
+                    == OutputFormat.atlas
+                dialog:modify({
+                    id = DialogWidgets.TrimCels,
+                    enabled = is_atlas,
+                })
+            end,
         })
 end
 
@@ -1245,6 +1611,13 @@ local function dialog_persistence(plugin, dialog)
                 dialog:modify(update)
             end)
         end
+        local is_atlas = data[DialogWidgets.OutputFormat] == OutputFormat.atlas
+        pcall(function()
+            dialog:modify({
+                id = DialogWidgets.TrimCels,
+                enabled = is_atlas,
+            })
+        end)
     end
     -- print(app.sprite.filename, inspect.inspect(plugin.preferences))
     return dialog
@@ -1267,10 +1640,17 @@ local function repeat_export(plugin)
 
     local data = plugin.preferences[app.sprite.filename]
     data._is_synthetic = true
-    local success_information = _export_tilesource({
+    local synthetic_dialog = {
         data = data,
         close = function(...) end,
-    })
+    }
+    local is_atlas = data[DialogWidgets.OutputFormat] == OutputFormat.atlas
+    local success_information
+    if is_atlas then
+        success_information = _export_atlas(synthetic_dialog)
+    else
+        success_information = _export_tilesource(synthetic_dialog)
+    end
     if not get_is_success_suppressed(plugin) and #success_information ~= 0 then
         success_dialog(nil, success_information)
     end
@@ -1326,7 +1706,14 @@ local function show_dialog(plugin)
 
     dialog = basic_dialog(dialog, {
         run_export = function()
-            local success_information = _export_tilesource(dialog)
+            local is_atlas = dialog.data[DialogWidgets.OutputFormat]
+                == OutputFormat.atlas
+            local success_information
+            if is_atlas then
+                success_information = _export_atlas(dialog)
+            else
+                success_information = _export_tilesource(dialog)
+            end
             if #success_information ~= 0 then
                 _export_persistence(plugin, dialog)
             end
