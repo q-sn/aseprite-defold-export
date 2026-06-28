@@ -210,6 +210,7 @@ local L = {
     atlas_title = "Select an existing atlas or type a new one",
     no_atlas_selected = "pick an atlas file (or type a new name)",
     no_project_root = "game.project not found above the atlas - put the atlas inside your Defold project",
+    sprite_outside_project = "the .aseprite file must live inside the same Defold project as the atlas",
     trim_cels = "trim cels",
     trim_cels_label = "remove transparent borders",
     run_label = "run export",
@@ -1000,8 +1001,11 @@ local function save_atlas(savedata)
         return err
     end
 
-    local prefix = savedata.internal_image_dir or ""
     local sprite_name = savedata.sprite_name or ""
+    -- this sprite's frames are "<sprite-folder>/<sprite>_<n>.png"; match on that
+    -- exact prefix so re-export only drops THIS sprite even if several sprites
+    -- share a folder
+    local prefix = (savedata.internal_image_dir or "") .. sprite_name .. "_"
     local new_ids = {}
     for _, id in ipairs(animation_ids) do
         new_ids[id] = true
@@ -1501,9 +1505,9 @@ local function to_defold_resource(abs, proot)
     return rel
 end
 
--- atlas-only path resolution driven by the chosen atlas file (the OutputFolder
--- widget now holds an absolute .atlas path). Frames are written to a subfolder
--- next to the atlas named after the sprite, and referenced via project paths.
+-- atlas-only path resolution. The OutputFolder widget holds an absolute .atlas
+-- path (the atlas may live anywhere in the project). Frame PNGs are written next
+-- to the .aseprite SOURCE file and referenced via project-relative paths.
 local function get_atlas_paths(dialog)
     local paths = {}
     local parent = ternary(dialog.data._is_synthetic, nil, dialog)
@@ -1524,8 +1528,14 @@ local function get_atlas_paths(dialog)
         error_dialog(parent, L.no_project_root)
         return false
     end
+    proot = app.fs.normalizePath(proot)
 
-    local frames_dir = app.fs.joinPath(atlas_dir, sprite_name)
+    -- frames live next to the .aseprite source, NOT next to the atlas
+    local frames_dir = app.fs.normalizePath(app.fs.filePath(app.sprite.filename))
+    if frames_dir:sub(1, #proot) ~= proot then
+        error_dialog(parent, L.sprite_outside_project)
+        return false
+    end
     app.fs.makeAllDirectories(frames_dir)
 
     paths.proot = proot
@@ -1536,7 +1546,7 @@ local function get_atlas_paths(dialog)
     paths.export_texture_path =
         get_temporary_file(sprite_name .. "_sheet." .. C.extension_png)
     paths.module_filepath = app.fs.joinPath(
-        atlas_dir,
+        frames_dir,
         C.module_filename_template:format(sprite_name, OutputFormat.atlas)
     )
     return paths

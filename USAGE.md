@@ -4,8 +4,9 @@ Aseprite-Defold-Export exports into a single Defold `.atlas`:
 
 - Pick the atlas in the **atlas** field of the export dialog (existing → merge, or a
   new name in any folder inside your Defold project).
-- Frame PNGs go to a subfolder next to the atlas, named after the sprite
-  (`<atlas-folder>/<sprite>/<sprite>_<...>.png`).
+- Frame PNGs are written next to the `.aseprite` source file
+  (`<sprite-folder>/<sprite>_<frame>.png`); the atlas may live anywhere in the
+  same Defold project.
 - Animations are named `<sprite>_<tag>` (or just `<sprite>` when the sprite has no
   tags), so several sprites can live in one shared atlas without name clashes.
 - Re-exporting a sprite replaces only that sprite's entries; the rest of the atlas

@@ -16,9 +16,9 @@ This fork is **atlas-only** and adds:
 2. **atlas**: browse to pick an existing `.atlas` to merge into, or type a new name
    in any folder **inside your Defold project** (the folder containing `game.project`
    is detected automatically).
-3. Frames are written to a subfolder next to the atlas, named after the sprite
-   (e.g. `<atlas-folder>/bee/bee_0.png`) and referenced by project path
-   (`/assets/.../bee/bee_0.png`).
+3. Frame PNGs are written next to the **.aseprite source file** (e.g.
+   `<sprite-folder>/bee_0.png`) and referenced by project path. The atlas itself
+   may live anywhere in the same Defold project.
 
 Re-exporting the same sprite replaces only that sprite's frames and animations;
 everything else already in the atlas is preserved. This is what lets you build one
