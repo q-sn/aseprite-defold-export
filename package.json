@@ -1,8 +1,8 @@
 {
-  "name": "asefold",
-  "displayName": "Asefold",
-  "description": "Export `.aseprite` into Defold's `.tilesource` file format.",
-  "version": "0.3",
+  "name": "aseprite-defold-export",
+  "displayName": "Aseprite-Defold-Export",
+  "description": "Export `.aseprite` sprites into a Defold `.atlas` (tags become animations; merges many sprites into one shared atlas).",
+  "version": "1.0",
   "author": {
     "name": "Kaique Santos",
     "email": "kags_@live.com",

@@ -33,12 +33,12 @@ local TilemapPathData = {}
 
 --- constants
 local C = {
-    app_name = "asefold",
-    app_group = "asefold_file_export",
+    app_name = "aseprite-defold-export",
+    app_group = "aseprite_defold_export_file_export",
     file_export_group = "file_export",
     pardir = "..",
     underscore = "_",
-    temporary_export = "asefold_temporary",
+    temporary_export = "aseprite_defold_export_temporary",
     tab1 = "\t",
     tab2 = "\t\t",
     empty_space = " ",
@@ -62,7 +62,7 @@ local C = {
     _module_item_template = '%s%s = "%s"',
     _module_item_escape_template = '%s["%s"] = "%s"',
     _shallow_module_template = [[
--- generated @ aseprite: asefold-export
+-- generated @ aseprite: aseprite-defold-export
 local M = {
     -- ase-animations: begin
 %s,
@@ -77,7 +77,7 @@ local M = {
 return M
 ]],
     _deep_module_template = [[
--- generated @ aseprite: asefold-export
+-- generated @ aseprite: aseprite-defold-export
 local M = {
     animations = {
 %s
@@ -179,7 +179,7 @@ local L = {
     invalid_sprite = "invalid sprite",
     no_repeat_settings = "no settings to repeat",
     flatten = "flatten visible",
-    title_template = "Asefold: %s",
+    title_template = "Aseprite-Defold-Export: %s",
     titles = {
         "export",
         "thanks for exporting w/ us",
@@ -192,7 +192,7 @@ local L = {
         "comment what to improve",
         "localization coming next",
     },
-    export_title = "Export to defold",
+    export_title = "Export to Defold",
     repeat_title = "Repeat last",
     success = "success",
     sprite_tilesource_info = "export sprites to tilesource",
@@ -206,6 +206,10 @@ local L = {
     filepath_label = "where to export",
     output_folder_label = "output folder",
     output_format_label = "output format",
+    atlas_label = "atlas",
+    atlas_title = "Select an existing atlas or type a new one",
+    no_atlas_selected = "pick an atlas file (or type a new name)",
+    no_project_root = "game.project not found above the atlas - put the atlas inside your Defold project",
     trim_cels = "trim cels",
     trim_cels_label = "remove transparent borders",
     run_label = "run export",
@@ -235,7 +239,7 @@ local WidgetsValueField = {
     [DialogWidgets.Animation] = "option",
     [DialogWidgets.SpriteSheetType] = "option",
     [DialogWidgets.GenerateModule] = "option",
-    [DialogWidgets.OutputFolder] = "text",
+    [DialogWidgets.OutputFolder] = "filename",
     [DialogWidgets.OutputFormat] = "option",
     [DialogWidgets.TrimCels] = "selected",
     [DialogWidgets.FlattenVisible] = "selected",
@@ -267,8 +271,8 @@ local SpriteSheetLabels = {
     "HORIZONTAL",
 }
 local commands = {
-    AsefoldExportDialog = "AsefoldExportDialog",
-    AsefoldRepeatExport = "AsefoldRepeatExport",
+    AsepriteDefoldExportDialog = "AsepriteDefoldExportDialog",
+    AsepriteDefoldExportRepeat = "AsepriteDefoldExportRepeat",
 }
 local empty_name = "__empty__"
 
@@ -688,7 +692,8 @@ local function get_atlas_animations_from_tags(export_data, internal_image_dir)
     local animations = {}
     local animation_ids = {}
     local err = false
-    local all_frame_paths = {}
+    -- animations are named "<sprite>_<tag>" so several sprites can share one atlas
+    local sprite_name = app.fs.fileTitle(app.sprite.filename) or C.defold_sprite
 
     if #export_data.meta.frameTags == 0 then
         export_data.meta.frameTags = {
@@ -757,6 +762,11 @@ local function get_atlas_animations_from_tags(export_data, internal_image_dir)
                 return {}, {}, {}, format_err
             end
             local data = frame_data[id]
+            local out_id = sprite_name
+            if tag.name ~= empty_name then
+                out_id = sprite_name .. "_" .. tag.name
+            end
+            out_id = out_id:gsub("%s", "_")
             local tag_data = tag.data
             if not tag_data or tag_data == "" then
                 if tag["repeat"] and tag["repeat"] == "1" then
@@ -765,7 +775,7 @@ local function get_atlas_animations_from_tags(export_data, internal_image_dir)
                     tag_data = UserData.loop
                 end
             end
-            if data and not consumed_ids[id] then
+            if data and not consumed_ids[out_id] then
                 local playback_match = {
                     [UserData.once] = MapAniDir[direction_loop(
                         tag.direction or AniDir.FORWARD,
@@ -795,16 +805,14 @@ local function get_atlas_animations_from_tags(export_data, internal_image_dir)
 
                 local image_paths = {}
                 for _, frame_num in ipairs(data.frame_numbers) do
-                    local tile_id = C.id_format:format(data.layer, frame_num)
                     local frame_path = internal_image_dir
-                        .. app.fs.fileTitle(app.sprite.filename)
-                        .. "_" .. tile_id .. "." .. C.extension_png
+                        .. sprite_name
+                        .. "_" .. frame_num .. "." .. C.extension_png
                     table.insert(image_paths, frame_path)
-                    all_frame_paths[tile_id] = true
                 end
 
                 local animation = format_atlas_animation(
-                    id,
+                    out_id,
                     image_paths,
                     resulting_match,
                     data.fps,
@@ -812,25 +820,15 @@ local function get_atlas_animations_from_tags(export_data, internal_image_dir)
                     0
                 )
                 table.insert(animations, animation)
-                table.insert(animation_ids, id)
-                consumed_ids[id] = true
+                table.insert(animation_ids, out_id)
+                consumed_ids[out_id] = true
             end
         end
     end
 
-    local unique_frame_paths = {}
-    for tile_id, _ in pairs(all_frame_paths) do
-        local frame_path = internal_image_dir
-            .. app.fs.fileTitle(app.sprite.filename)
-            .. "_" .. tile_id .. "." .. C.extension_png
-        table.insert(unique_frame_paths, { id = tile_id, path = frame_path })
-    end
-    table.sort(unique_frame_paths, function(a, b) return a.id < b.id end)
-
+    -- atlas only needs the animations; top-level images would just add
+    -- redundant single-frame entries referencing the same files, so skip them.
     local image_entries = {}
-    for _, entry in ipairs(unique_frame_paths) do
-        table.insert(image_entries, C._atlas_image_template:format(entry.path))
-    end
 
     return image_entries, animations, animation_ids, err
 end
@@ -935,16 +933,62 @@ local function save_tilesource(savedata)
     return false
 end
 
-local function save_atlas(savedata)
-    local file
-    ---@type boolean | string | nil
-    local err
-    file, err = io.open(savedata.filepath, "w+")
-    if err or not file then
-        return { tostring(err) }, true
+-- parse an existing Defold .atlas into its image blocks, animation blocks and
+-- any other top-level content (scalar fields like extrude_borders, or blocks
+-- such as max_page_size) so we can merge into it instead of overwriting.
+local function parse_atlas(text)
+    local images, animations, others = {}, {}, {}
+    local lines = {}
+    for line in (text .. "\n"):gmatch("(.-)\n") do
+        table.insert(lines, line)
     end
+    local i = 1
+    while i <= #lines do
+        local line = lines[i]
+        local trimmed = line:gsub("^%s+", "")
+        local key = trimmed:match("^([%w_]+)%s*{%s*$")
+        if key then
+            local depth = 1
+            local block = { line }
+            i = i + 1
+            while i <= #lines and depth > 0 do
+                local l = lines[i]
+                local _, opens = l:gsub("{", "")
+                local _, closes = l:gsub("}", "")
+                depth = depth + opens - closes
+                table.insert(block, l)
+                i = i + 1
+            end
+            local blocktext = table.concat(block, "\n")
+            if key == "images" then
+                table.insert(images, {
+                    path = blocktext:match('image:%s*"(.-)"'),
+                    block = blocktext,
+                })
+            elseif key == "animations" then
+                table.insert(animations, {
+                    id = blocktext:match('id:%s*"(.-)"'),
+                    block = blocktext,
+                })
+            else
+                table.insert(others, blocktext)
+            end
+        else
+            if trimmed ~= "" then
+                table.insert(others, trimmed)
+            end
+            i = i + 1
+        end
+    end
+    return images, animations, others
+end
+
+-- write the atlas, MERGING into it when the file already has content:
+-- this sprite's own entries (frames under its folder, animations named
+-- "<sprite>" or "<sprite>_*") are replaced, everything else is preserved.
+local function save_atlas(savedata)
     local image_entries, animations, animation_ids = {}, {}, {}
-    err = false
+    local err = false
     if is_from_tags(savedata.dialog) and savedata.export_data then
         image_entries, animations, animation_ids, err =
             get_atlas_animations_from_tags(
@@ -955,10 +999,71 @@ local function save_atlas(savedata)
     if err then
         return err
     end
-    local out_data = C._atlas_template:format(
-        table.concat(image_entries, "\n"),
-        table.concat(animations, "\n")
-    )
+
+    local prefix = savedata.internal_image_dir or ""
+    local sprite_name = savedata.sprite_name or ""
+    local new_ids = {}
+    for _, id in ipairs(animation_ids) do
+        new_ids[id] = true
+    end
+
+    local kept_images, kept_anims, others_text = {}, {}, nil
+
+    local existing
+    do
+        local f = io.open(savedata.filepath, "r")
+        if f then
+            existing = f:read("a")
+            f:close()
+        end
+    end
+    if existing and existing:gsub("%s", "") ~= "" then
+        local eimgs, eanims, eothers = parse_atlas(existing)
+        for _, img in ipairs(eimgs) do
+            local mine = img.path and prefix ~= ""
+                and img.path:sub(1, #prefix) == prefix
+            if not mine then
+                table.insert(kept_images, img.block)
+            end
+        end
+        for _, an in ipairs(eanims) do
+            local id = an.id or ""
+            local mine = new_ids[id]
+                or (sprite_name ~= "" and (id == sprite_name
+                    or id:sub(1, #sprite_name + 1) == sprite_name .. "_"))
+            if not mine then
+                table.insert(kept_anims, an.block)
+            end
+        end
+        others_text = table.concat(eothers, "\n")
+    end
+
+    -- append the freshly exported blocks (strip the template's leading newline)
+    for _, e in ipairs(image_entries) do
+        table.insert(kept_images, (e:gsub("^%s+", "")))
+    end
+    for _, a in ipairs(animations) do
+        table.insert(kept_anims, (a:gsub("^%s+", "")))
+    end
+
+    if not others_text or others_text == "" then
+        others_text = "extrude_borders: 2"
+    end
+
+    local parts = {}
+    if #kept_images > 0 then
+        table.insert(parts, table.concat(kept_images, "\n"))
+    end
+    if #kept_anims > 0 then
+        table.insert(parts, table.concat(kept_anims, "\n"))
+    end
+    table.insert(parts, others_text)
+    local out_data = table.concat(parts, "\n") .. "\n"
+
+    local file, ferr = io.open(savedata.filepath, "w+")
+    if ferr or not file then
+        return { tostring(ferr) }, true
+    end
     file:write(out_data)
     file:close()
     if savedata.export_data then
@@ -1371,6 +1476,72 @@ local function _export_tilesource(dialog)
     return success_information
 end
 
+-- walk up from a directory until a folder containing game.project is found
+local function find_project_root(start_dir)
+    local dir = start_dir
+    local prev = nil
+    while dir and dir ~= "" and dir ~= prev do
+        if app.fs.isFile(app.fs.joinPath(dir, "game.project")) then
+            return dir
+        end
+        prev = dir
+        dir = app.fs.filePath(dir)
+    end
+    return nil
+end
+
+-- turn an absolute OS path into a Defold project-relative resource path
+-- ("/assets/..", always forward slashes). Fixes the Windows backslash bug.
+local function to_defold_resource(abs, proot)
+    local rel = abs:sub(#proot + 1)
+    rel = rel:gsub("\\", "/")
+    if rel:sub(1, 1) ~= "/" then
+        rel = "/" .. rel
+    end
+    return rel
+end
+
+-- atlas-only path resolution driven by the chosen atlas file (the OutputFolder
+-- widget now holds an absolute .atlas path). Frames are written to a subfolder
+-- next to the atlas named after the sprite, and referenced via project paths.
+local function get_atlas_paths(dialog)
+    local paths = {}
+    local parent = ternary(dialog.data._is_synthetic, nil, dialog)
+    local sprite_name = app.fs.fileTitle(app.sprite.filename) or C.defold_sprite
+
+    local atlas_abs = dialog.data[DialogWidgets.OutputFolder]
+    if not atlas_abs or atlas_abs == "" then
+        error_dialog(parent, L.no_atlas_selected)
+        return false
+    end
+    if app.fs.fileExtension(atlas_abs):lower() ~= C.extension_atlas then
+        atlas_abs = atlas_abs .. "." .. C.extension_atlas
+    end
+
+    local atlas_dir = app.fs.filePath(atlas_abs)
+    local proot = find_project_root(atlas_dir)
+    if not proot then
+        error_dialog(parent, L.no_project_root)
+        return false
+    end
+
+    local frames_dir = app.fs.joinPath(atlas_dir, sprite_name)
+    app.fs.makeAllDirectories(frames_dir)
+
+    paths.proot = proot
+    paths.atlas_filename = atlas_abs
+    paths.atlas_frames_folder = frames_dir
+    paths.internal_image_dir = to_defold_resource(frames_dir, proot) .. "/"
+    paths.temporary_export_path = get_temporary_file(C.temporary_export)
+    paths.export_texture_path =
+        get_temporary_file(sprite_name .. "_sheet." .. C.extension_png)
+    paths.module_filepath = app.fs.joinPath(
+        atlas_dir,
+        C.module_filename_template:format(sprite_name, OutputFormat.atlas)
+    )
+    return paths
+end
+
 local function _export_atlas(dialog)
     local ran_transaction = false
     if dialog.data[DialogWidgets.FlattenVisible] then
@@ -1389,7 +1560,7 @@ local function _export_atlas(dialog)
         end)
     end
 
-    local paths = get_paths(dialog)
+    local paths = get_atlas_paths(dialog)
     if not paths then
         return {}
     end
@@ -1428,10 +1599,9 @@ local function _export_atlas(dialog)
                     tile_image = Image(tile_image, trimmed)
                 end
             end
-            local tile_filename = C.id_format:format(layer, frame_num)
             tile_image:saveAs(app.fs.joinPath(
                 paths.atlas_frames_folder,
-                sprite_name .. "_" .. tile_filename .. "." .. C.extension_png
+                sprite_name .. "_" .. frame_num .. "." .. C.extension_png
             ))
         end
     end
@@ -1442,6 +1612,7 @@ local function _export_atlas(dialog)
         filepath = paths.atlas_filename,
         internal_image_dir = paths.internal_image_dir,
         module_filename = paths.module_filepath,
+        sprite_name = sprite_name,
     })
     if err then
         error_dialog(dialog, { err })
@@ -1535,37 +1706,28 @@ local function dialog_export_tilesource(dialog)
             id = DialogWidgets.TrimCels,
             text = L.trim_cels,
             label = L.trim_cels_label,
-            enabled = false,
+            enabled = true,
         })
 end
 
 ---@param dialog Dialog
 local function basic_dialog(dialog, overrides)
+    local default_atlas = (app.fs.fileTitle(app.sprite.filename) or C.defold_sprite)
+        .. "." .. C.extension_atlas
     return dialog
         :button({
             text = L.run_export,
             label = L.run_label,
             onclick = overrides.run_export or function(...) end,
         })
-        :entry({
-            text = "/assets",
-            save = true,
-            label = L.output_folder_label,
+        :file({
             id = DialogWidgets.OutputFolder,
-        })
-        :combobox({
-            id = DialogWidgets.OutputFormat,
-            label = L.output_format_label,
-            options = { OutputFormat.tilesource, OutputFormat.atlas },
-            option = OutputFormat.tilesource,
-            onchange = function()
-                local is_atlas = dialog.data[DialogWidgets.OutputFormat]
-                    == OutputFormat.atlas
-                dialog:modify({
-                    id = DialogWidgets.TrimCels,
-                    enabled = is_atlas,
-                })
-            end,
+            label = L.atlas_label,
+            title = L.atlas_title,
+            save = true,
+            entry = true,
+            filetypes = { C.extension_atlas },
+            filename = default_atlas,
         })
 end
 
@@ -1611,13 +1773,6 @@ local function dialog_persistence(plugin, dialog)
                 dialog:modify(update)
             end)
         end
-        local is_atlas = data[DialogWidgets.OutputFormat] == OutputFormat.atlas
-        pcall(function()
-            dialog:modify({
-                id = DialogWidgets.TrimCels,
-                enabled = is_atlas,
-            })
-        end)
     end
     -- print(app.sprite.filename, inspect.inspect(plugin.preferences))
     return dialog
@@ -1644,13 +1799,7 @@ local function repeat_export(plugin)
         data = data,
         close = function(...) end,
     }
-    local is_atlas = data[DialogWidgets.OutputFormat] == OutputFormat.atlas
-    local success_information
-    if is_atlas then
-        success_information = _export_atlas(synthetic_dialog)
-    else
-        success_information = _export_tilesource(synthetic_dialog)
-    end
+    local success_information = _export_atlas(synthetic_dialog)
     if not get_is_success_suppressed(plugin) and #success_information ~= 0 then
         success_dialog(nil, success_information)
     end
@@ -1706,14 +1855,7 @@ local function show_dialog(plugin)
 
     dialog = basic_dialog(dialog, {
         run_export = function()
-            local is_atlas = dialog.data[DialogWidgets.OutputFormat]
-                == OutputFormat.atlas
-            local success_information
-            if is_atlas then
-                success_information = _export_atlas(dialog)
-            else
-                success_information = _export_tilesource(dialog)
-            end
+            local success_information = _export_atlas(dialog)
             if #success_information ~= 0 then
                 _export_persistence(plugin, dialog)
             end
@@ -1735,7 +1877,7 @@ function init(plugin)
         group = C.file_export_group,
     })
     plugin:newCommand({
-        id = commands.AsefoldExportDialog,
+        id = commands.AsepriteDefoldExportDialog,
         title = L.export_title,
         group = group,
         onclick = function()
@@ -1743,7 +1885,7 @@ function init(plugin)
         end,
     })
     plugin:newCommand({
-        id = commands.AsefoldRepeatExport,
+        id = commands.AsepriteDefoldExportRepeat,
         title = L.repeat_title,
         group = group,
         onclick = function()

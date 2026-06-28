@@ -9,10 +9,10 @@ import json
 import re
 import subprocess
 
-ASE_EXTENSION_FOLDER = "~/.config/aseprite/extensions/asefold"
-EXPORT_FILE = "asefold.lua"
+ASE_EXTENSION_FOLDER = "~/.config/aseprite/extensions/aseprite-defold-export"
+EXPORT_FILE = "aseprite-defold-export.lua"
 EXTENSION_FILE = "extension.lua"
-ZIP_FILE = "asefold.v{}.aseprite-extension"
+ZIP_FILE = "aseprite-defold-export.v{}.aseprite-extension"
 PACKAGE_FILE = "package.json"
 REMOVE_PATTERNS = [
     [
@@ -65,7 +65,7 @@ def preprocess_package(is_release):
     return package_json, contributes_files
 
 
-class AsefoldHandler(FileSystemEventHandler):
+class AsepriteDefoldExportHandler(FileSystemEventHandler):
     def __init__(self, args:argparse.Namespace, *argses, **kwargs):
         super().__init__(*argses, **kwargs)
         self.args = args
@@ -119,7 +119,7 @@ def main():
     args = argparser.parse_args()
 
     if args.watch:
-        watcher = AsefoldHandler(args)
+        watcher = AsepriteDefoldExportHandler(args)
         observer = PollingObserver()
         observer.schedule(watcher, path=EXPORT_FILE, recursive=True)
         observer.start()

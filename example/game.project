@@ -1,5 +1,5 @@
 [project]
-title = Asefold
+title = Aseprite-Defold-Export
 developer = github.com/Kaiqgs
 custom_resources = assets/
 dependencies#0 = https://github.com/britzl/defold-orthographic/archive/refs/tags/3.3.2.zip

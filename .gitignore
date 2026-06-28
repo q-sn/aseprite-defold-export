@@ -2,6 +2,12 @@
 *.aseprite-extension
 .luarc.json
 
+# Generated from aseprite-defold-export.lua by ci/release.py (source of truth is aseprite-defold-export.lua)
+extension.lua
+
+# Local packaging output
+/dist/
+
 # Defold Build Artifacts
 example/assets/
 example/.internal/
@@ -16,3 +22,7 @@ luac.out
 __pycache__/
 *.pyc
 *.pyo
+
+# IDE
+.idea/
+.vscode/
